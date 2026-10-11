@@ -7,25 +7,26 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 
-SIZE = 320
-THRESHOLD = 0.65
-MODEL_PATH = (
+from numpy.typing import NDArray
+
+SIZE: int = 320
+THRESHOLD: float = 0.65
+MODEL_PATH: Path = (
     Path(__file__).resolve().parent.parent
     / "models" / "RetinaFace" / "RetinaFace_mobile320.onnx"
 )
 
 
-def make_priors():
+def make_priors() -> NDArray[np.float32]:
     """
     生成 RetinaFace 的 4200 个先验框
     """
-    priors = []
-    steps = (8, 16, 32)
-    sizes = ((16, 32), (64, 128), (256, 512))
+    priors: list[list[float]] = []
+    steps: tuple[int, ...] = (8, 16, 32)
+    sizes: tuple[tuple[int, int], ...] = ((16, 32), (64, 128), (256, 512))
 
     for step, level_sizes in zip(steps, sizes):
-        for y, x in product(range(SIZE // step),
-                            range(SIZE // step)):
+        for y, x in product(range(SIZE // step), range(SIZE // step)):
             for s in level_sizes:
                 priors.append([
                     (x + 0.5) * step / SIZE,
@@ -37,13 +38,14 @@ def make_priors():
     return np.asarray(priors, dtype=np.float32)
 
 
-PRIORS = make_priors()
+PRIORS: NDArray = make_priors()
 
 
-def preprocess(frame):
+def preprocess(frame: NDArray) -> tuple:
     """
     等比例缩放、填充、RGB 转换、均值处理
     """
+
     h, w = frame.shape[:2]
     scale = min(SIZE / w, SIZE / h)
 
@@ -65,12 +67,12 @@ def preprocess(frame):
     return np.ascontiguousarray(data), scale, px, py
 
 
-def nms(boxes, scores, threshold=0.4):
+def nms(boxes, scores: NDArray[np.intp], threshold: float=0.4) -> list[int]:
     """
     非极大值抑制，去除重叠检测框
     """
-    order = scores.argsort()[::-1]
-    keep = []
+    order: NDArray[np.intp] = scores.argsort()[::-1]  # 对索引排序
+    keep: list[int] = []
 
     while order.size > 0:
         i = order[0]
@@ -80,11 +82,15 @@ def nms(boxes, scores, threshold=0.4):
         if others.size == 0:
             break
 
-        xx1 = np.maximum(boxes[i, 0], boxes[others, 0])
-        yy1 = np.maximum(boxes[i, 1], boxes[others, 1])
-        xx2 = np.minimum(boxes[i, 2], boxes[others, 2])
-        yy2 = np.minimum(boxes[i, 3], boxes[others, 3])
+        # 交集的左上角点
+        xx1: int = np.maximum(boxes[i, 0], boxes[others, 0])
+        yy1: int = np.maximum(boxes[i, 1], boxes[others, 1])
 
+        # 交集的右下角点
+        xx2: int = np.minimum(boxes[i, 2], boxes[others, 2])
+        yy2: int = np.minimum(boxes[i, 3], boxes[others, 3])
+
+        # 计算交集面积
         inter = (
             np.maximum(0, xx2 - xx1)
             * np.maximum(0, yy2 - yy1)
@@ -99,13 +105,13 @@ def nms(boxes, scores, threshold=0.4):
             * (boxes[others, 3] - boxes[others, 1])
         )
 
-        iou = inter / (area_a + area_b - inter + 1e-6)
+        iou = inter / (area_a + area_b - inter + 1e-6)  # +1e-6防止除0报错
         order = others[iou <= threshold]
 
     return keep
 
 
-def detect(frame, session):
+def detect(frame: NDArray, session: ort.InferenceSession) -> list:
     tensor, scale, px, py = preprocess(frame)
     input_name = session.get_inputs()[0].name
 
@@ -154,16 +160,16 @@ def detect(frame, session):
     ]
 
 
-def main():
+def main() -> None:
     if not MODEL_PATH.is_file():
         raise FileNotFoundError(f"找不到模型: {MODEL_PATH}")
 
-    session = ort.InferenceSession(
+    session: ort.InferenceSession = ort.InferenceSession(
         str(MODEL_PATH),
         providers=["CPUExecutionProvider"]
     )
 
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    cap: cv2.VideoCapture = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
     if not cap.isOpened():
         cap.release()
@@ -178,9 +184,11 @@ def main():
     print("按 Q 退出")
 
     try:
+        ret: bool
+        frame: NDArray | None
         while True:
             ret, frame = cap.read()
-            if not ret:
+            if not ret or frame is None:
                 break
 
             start = time.perf_counter()
@@ -220,8 +228,7 @@ def main():
                 box, _ = max(
                     faces,
                     key=lambda f: (
-                        (f[0][2] - f[0][0])
-                        * (f[0][3] - f[0][1])
+                        (f[0][2] - f[0][0]) * (f[0][3] - f[0][1])
                     )
                 )
                 fx = (box[0] + box[2]) // 2
